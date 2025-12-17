@@ -1,6 +1,7 @@
 # production_api.py - Production FastAPI service
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
@@ -9,6 +10,8 @@ import asyncio
 import os
 import sys
 from contextlib import asynccontextmanager
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -69,10 +72,42 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.api.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Initialize Prometheus metrics
+if settings.monitoring.enable_metrics:
+    instrumentator = Instrumentator(
+        should_group_status_codes=True,
+        should_ignore_untemplated=True,
+        should_respect_env_var=True,
+        should_instrument_requests_inprogress=True,
+        excluded_handlers=["/metrics", "/health", "/live", "/ready"],
+        inprogress_name="http_requests_inprogress",
+        inprogress_labels=True,
+    )
+    instrumentator.instrument(app)
+
+# Custom Prometheus metrics
+prediction_counter = Counter(
+    'prediction_requests_total',
+    'Total number of prediction requests',
+    ['symbol', 'task', 'status']
+)
+
+prediction_duration = Histogram(
+    'prediction_duration_seconds',
+    'Time spent processing prediction requests',
+    ['symbol', 'task']
+)
+
+loaded_models_gauge = Gauge(
+    'loaded_models_total',
+    'Number of loaded ML models',
+    ['symbol', 'task']
 )
 
 # Pydantic models
@@ -110,9 +145,9 @@ async def health_check():
     """Health check endpoint with detailed model status"""
     if not predictor:
         raise HTTPException(status_code=503, detail="Predictor not initialized")
-    
+
     status = predictor.get_model_status()
-    
+
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now(),
@@ -120,6 +155,47 @@ async def health_check():
         available_symbols=list(status['models_by_symbol'].keys()),
         model_status=status
     )
+
+@app.get("/live")
+async def liveness_probe():
+    """
+    Kubernetes liveness probe - checks if the application is alive.
+    Returns 200 if the process is running, regardless of model status.
+    """
+    return {"status": "alive", "timestamp": datetime.now()}
+
+@app.get("/ready")
+async def readiness_probe():
+    """
+    Kubernetes readiness probe - checks if the application is ready to serve traffic.
+    Returns 200 only if models are loaded and ready to make predictions.
+    """
+    if not predictor:
+        raise HTTPException(status_code=503, detail="Predictor not initialized")
+
+    status = predictor.get_model_status()
+
+    if status['total_models'] == 0:
+        raise HTTPException(status_code=503, detail="No models loaded")
+
+    # Update loaded models gauge
+    for symbol, count in status['models_by_symbol'].items():
+        loaded_models_gauge.labels(symbol=symbol, task='all').set(count)
+
+    return {
+        "status": "ready",
+        "timestamp": datetime.now(),
+        "loaded_models": status['total_models'],
+        "available_symbols": list(status['models_by_symbol'].keys())
+    }
+
+@app.get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+    Returns metrics in Prometheus format for scraping.
+    """
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 @app.get("/tasks")
 async def list_available_tasks():
