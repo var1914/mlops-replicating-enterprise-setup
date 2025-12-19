@@ -19,11 +19,15 @@ An ML inference boilerplate that provides the infrastructure to serve your train
 - ✅ **Model Registry** (MLflow) - Version control and stage-based deployment
 - ✅ **Inference API** (FastAPI) - REST API with auto-docs
 - ✅ **Monitoring** (Prometheus + Grafana) - Metrics and dashboards
-- ✅ **Production K8s Manifests** - Deployment, HPA, Ingress, health probes
+- ✅ **Docker Image** - Production-ready container builds successfully
+
+**Work in Progress (Not Tested):**
+- ⚠️ **Kubernetes Deployment** - Manifests and Helm charts exist, not validated yet
+- ⚠️ **Production Setup** - Needs testing in live K8s cluster
 
 **What's Coming:**
 - ⏳ **Training Pipeline** - Automated model training and registration
-- ⏳ **Full Production Setup** - End-to-end MLOps with training + serving
+- ⏳ **Validated K8s Deployment** - Fully tested production setup
 
 ---
 
@@ -128,14 +132,38 @@ curl -X POST "http://localhost:8000/predict/BTCUSDT" \
 
 ## 📦 Production Deployment (Kubernetes)
 
+> **⚠️ STATUS: WORK IN PROGRESS - NOT FULLY TESTED**
+>
+> The Kubernetes manifests and Helm charts exist but have not been validated in a live cluster yet.
+
 **Docker Compose is for local testing only. For production, use Kubernetes deployment.**
+
+### Two Deployment Options
+
+#### Option 1: Helm Charts (Recommended - UNTESTED)
+
+Deploy supporting services using Helm:
+- MLflow with PostgreSQL backend
+- MinIO for object storage
+- Grafana + Prometheus for monitoring
+- (Optional) Airflow for training workflows
+
+**See [k8s/HELM_DEPLOYMENT.md](k8s/HELM_DEPLOYMENT.md) for detailed Helm deployment guide.**
+
+#### Option 2: External Services
+
+Use managed services from cloud providers:
+- AWS RDS (PostgreSQL)
+- AWS ElastiCache (Redis)
+- AWS S3 (object storage)
+- Managed MLflow or self-hosted
 
 ### Prerequisites
 - Kubernetes cluster (1.19+)
 - kubectl configured
+- Helm 3 (for Helm deployment option)
 - Docker registry (Docker Hub, ECR, GCR, etc.)
-- External MLflow server (or deploy MLflow separately)
-- External PostgreSQL, Redis, MinIO/S3
+- Supporting services (via Helm or external)
 
 ### Step 1: Build and Push Docker Image
 
