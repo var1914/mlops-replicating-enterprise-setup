@@ -5,32 +5,53 @@ namespace: ml-pipeline
 
 # Common labels applied to all resources
 commonLabels:
-  project: crypto-ml-pipeline
+  project: ml-inference-pipeline
   managed-by: kustomize
 
+# =============================================================================
 # Resources to deploy
+# NOTE: secrets.yaml must be created from secrets.yaml.example before deploying
+# NOTE: Ingress and ServiceMonitor are optional - uncomment if needed
+# =============================================================================
 resources:
   - api-configmap.yaml
-  - secrets.yaml  # Create this from secrets.yaml.example
   - api-deployment.yaml
   - api-service.yaml
   - api-hpa.yaml
-  - api-ingress.yaml
-  - api-servicemonitor.yaml
+  # - api-ingress.yaml         # Uncomment if using ingress controller
+  # - api-servicemonitor.yaml  # Uncomment if using Prometheus Operator
 
-# Images (update these with your registry)
+# =============================================================================
+# Images
+# For local testing (Docker Desktop K8s): use 'crypto-prediction-api'
+# For remote clusters: update with your registry (e.g., docker.io/yourname/ml-inference-api)
+#
+# TESTED: Docker Desktop Kubernetes (ARM64/Apple Silicon)
+# =============================================================================
 images:
   - name: crypto-prediction-api
-    newName: your-registry/crypto-prediction-api
+    newName: crypto-prediction-api  # Change to your-registry/ml-inference-api for production
     newTag: "1.0.0"
 
-# ConfigMap generator (alternative to api-configmap.yaml)
-# configMapGenerator:
-#   - name: ml-pipeline-config
-#     env: ../env.production
-
-# Secret generator (for non-K8s secret management)
-# secretGenerator:
-#   - name: ml-pipeline-secrets
-#     envs:
-#       - secrets.env
+# =============================================================================
+# Usage:
+#
+# 1. First deploy infrastructure using Helm (run from repo root):
+#    ./k8s/deploy.sh infra
+#
+# 2. Build and push Docker image:
+#    docker build -t your-registry/ml-inference-api:1.0.0 -f docker/Dockerfile.inference .
+#    docker push your-registry/ml-inference-api:1.0.0
+#
+# 3. Update the 'images' section above with your registry
+#
+# 4. Create secrets:
+#    cp k8s/secrets.yaml.example k8s/secrets.yaml
+#    # Edit secrets.yaml with base64-encoded values
+#
+# 5. Deploy API:
+#    kubectl apply -k k8s/
+#
+# Or use the deployment script:
+#    IMAGE_REGISTRY=your-registry ./k8s/deploy.sh api
+# =============================================================================
