@@ -1,342 +1,476 @@
-# Kubernetes Deployment Manifests
+# Kubernetes Deployment Guide
 
-This directory contains Kubernetes manifests for deploying the Crypto ML Pipeline production API.
+Complete guide for deploying the ML Inference Infrastructure on Kubernetes.
 
-## Files Overview
+> **Status:** Tested on Docker Desktop Kubernetes (ARM64/Apple Silicon)
 
-| File | Description |
-|------|-------------|
-| `secrets.yaml.example` | Template for Kubernetes secrets (passwords, API keys) |
-| `api-configmap.yaml` | Non-sensitive configuration (hostnames, ports, etc.) |
-| `api-deployment.yaml` | Main application deployment with 2 replicas |
-| `api-service.yaml` | ClusterIP service exposing port 8000 |
-| `api-hpa.yaml` | Horizontal Pod Autoscaler (2-10 replicas) |
-| `api-ingress.yaml` | Ingress for external access (optional) |
-| `api-servicemonitor.yaml` | Prometheus ServiceMonitor for metrics |
-| `kustomization.yaml` | Kustomize configuration for easier deployment |
-
-## Prerequisites
-
-1. Kubernetes cluster (v1.20+)
-2. kubectl configured and connected to your cluster
-3. Namespace created: `kubectl create namespace ml-pipeline`
-4. Docker image built and pushed to registry
-5. Prometheus Operator installed (for ServiceMonitor)
-6. Ingress Controller installed (for Ingress, e.g., nginx-ingress)
+---
 
 ## Quick Start
 
-### 1. Create Secrets
-
-First, create your secrets from the template:
+### One-Command Deployment
 
 ```bash
-# Copy the example
-cp secrets.yaml.example secrets.yaml
+# Deploy everything (infrastructure + API)
+./scripts/k8s-bootstrap.sh
 
-# Edit and fill in actual values (base64 encoded)
-nano secrets.yaml
-
-# Encode secrets (example)
-echo -n "your_db_password" | base64
-echo -n "your_minio_key" | base64
-
-# Apply secrets
-kubectl apply -f secrets.yaml
+# Validate deployment
+./scripts/validate-deployment.sh --env k8s
 ```
 
-### 2. Review and Update ConfigMap
-
-Edit `api-configmap.yaml` to match your environment:
+### Cleanup
 
 ```bash
-nano api-configmap.yaml
-
-# Update these values:
-# - DB_HOST
-# - MINIO_ENDPOINT
-# - REDIS_HOST
-# - MLFLOW_TRACKING_URI
-# - BINANCE_SYMBOLS (your trading pairs)
+./scripts/k8s-bootstrap.sh --cleanup
 ```
 
-### 3. Update Docker Image
+---
 
-Edit `api-deployment.yaml` or `kustomization.yaml`:
+## What Gets Deployed
 
-```yaml
-# In api-deployment.yaml, update:
-image: your-registry.com/crypto-prediction-api:1.0.0
+| Component | Helm Chart / Method | Service Name | Port |
+|-----------|---------------------|--------------|------|
+| MinIO | bitnami/minio | ml-minio | 9000 |
+| Redis | bitnami/redis | ml-redis-master | 6379 |
+| PostgreSQL | K8s Manifest | postgresql | 5432 |
+| MLflow | community-charts/mlflow | ml-mlflow | 5000 |
+| Prometheus | kube-prometheus-stack | ml-monitoring-prometheus | 9090 |
+| Grafana | kube-prometheus-stack | ml-monitoring-grafana | 80 |
+| Inference API | Kustomize | crypto-prediction-api | 8000 |
 
-# OR in kustomization.yaml:
-images:
-  - name: crypto-prediction-api
-    newName: your-registry.com/crypto-prediction-api
-    newTag: "1.0.0"
-```
+---
 
-### 4. Deploy Using kubectl
+## Prerequisites
+
+- Docker Desktop with Kubernetes enabled (or any K8s cluster 1.20+)
+- kubectl configured
+- Helm 3.x installed
+- ~8GB RAM available for Docker Desktop
+
+### Verify Prerequisites
 
 ```bash
-# Apply manifests in order
-kubectl apply -f api-configmap.yaml
-kubectl apply -f secrets.yaml
-kubectl apply -f api-deployment.yaml
-kubectl apply -f api-service.yaml
-kubectl apply -f api-hpa.yaml
-kubectl apply -f api-ingress.yaml        # Optional
-kubectl apply -f api-servicemonitor.yaml # Optional
+# Check kubectl
+kubectl version --client
 
-# Or apply all at once
-kubectl apply -f .
+# Check helm
+helm version
+
+# Check cluster connection
+kubectl cluster-info
 ```
 
-### 5. Deploy Using Kustomize
+---
+
+## Deployment Options
+
+### Option 1: Full Deployment (Recommended)
+
+Deploys all infrastructure and API:
 
 ```bash
-# Build and preview
-kubectl kustomize .
+./scripts/k8s-bootstrap.sh
+```
 
-# Apply with kustomize
+### Option 2: Infrastructure Only
+
+Deploy only supporting services (MinIO, Redis, PostgreSQL, MLflow, Monitoring):
+
+```bash
+./scripts/k8s-bootstrap.sh --infra-only
+```
+
+### Option 3: API Only
+
+Deploy only the inference API (requires infrastructure to be running):
+
+```bash
+./scripts/k8s-bootstrap.sh --api-only
+```
+
+### Option 4: Individual Components
+
+Deploy components one at a time:
+
+```bash
+# Add Helm repos
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo add community-charts https://community-charts.github.io/helm-charts
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+# Create namespace
+kubectl create namespace ml-pipeline
+
+# Deploy MinIO
+helm upgrade --install ml-minio bitnami/minio \
+  --namespace ml-pipeline \
+  --values ../minio/values.yaml
+
+# Deploy Redis
+helm upgrade --install ml-redis bitnami/redis \
+  --namespace ml-pipeline \
+  --values ../redis/values.yaml
+
+# Deploy MLflow
+helm upgrade --install ml-mlflow community-charts/mlflow \
+  --namespace ml-pipeline \
+  --values ../mlflow/values.yaml
+
+# Deploy Monitoring
+helm upgrade --install ml-monitoring prometheus-community/kube-prometheus-stack \
+  --namespace ml-pipeline \
+  --values ../grafana/values.yaml
+
+# Deploy API
 kubectl apply -k .
 ```
 
-## Verification
+---
 
-### Check Deployment Status
+## Accessing Services
 
-```bash
-# Check pods
-kubectl get pods -n ml-pipeline -l app=crypto-prediction-api
-
-# Check deployment
-kubectl describe deployment crypto-prediction-api -n ml-pipeline
-
-# Check service
-kubectl get svc crypto-prediction-api -n ml-pipeline
-
-# Check HPA
-kubectl get hpa -n ml-pipeline
-
-# View logs
-kubectl logs -f deployment/crypto-prediction-api -n ml-pipeline
-```
-
-### Test the API
+### Port Forwarding (Development/Testing)
 
 ```bash
-# Port forward for local testing
-kubectl port-forward svc/crypto-prediction-api 8000:8000 -n ml-pipeline
+# Inference API
+kubectl port-forward -n ml-pipeline svc/crypto-prediction-api 8000:8000
+# Access: http://localhost:8000/docs
 
-# Test health endpoint
-curl http://localhost:8000/health
+# MLflow UI
+kubectl port-forward -n ml-pipeline svc/ml-mlflow 5000:5000
+# Access: http://localhost:5000
 
-# Test prediction endpoint
-curl http://localhost:8000/predict/BTCUSDT
+# Grafana
+kubectl port-forward -n ml-pipeline svc/ml-monitoring-grafana 3000:80
+# Access: http://localhost:3000 (admin / prom-operator)
 
-# View API docs
-open http://localhost:8000/docs
+# MinIO Console
+kubectl port-forward -n ml-pipeline svc/ml-minio-console 9090:9090
+# Access: http://localhost:9090 (admin / admin123)
+
+# Prometheus
+kubectl port-forward -n ml-pipeline svc/ml-monitoring-kube-prometh-prometheus 9090:9090
+# Access: http://localhost:9090
 ```
 
-### Monitor
+### Using Ingress (Production)
 
-```bash
-# Check metrics endpoint
-kubectl port-forward svc/crypto-prediction-api 8000:8000 -n ml-pipeline
-curl http://localhost:8000/metrics
+Uncomment ingress in `kustomization.yaml` and configure `api-ingress.yaml`:
 
-# View Prometheus targets (if ServiceMonitor is working)
-# Access Prometheus UI and check Targets page
+```yaml
+# kustomization.yaml
+resources:
+  - api-ingress.yaml  # Uncomment this
 ```
+
+```yaml
+# api-ingress.yaml
+spec:
+  rules:
+  - host: api.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: crypto-prediction-api
+            port:
+              number: 8000
+```
+
+---
 
 ## Configuration
 
+### Helm Values Files
+
+| File | Purpose |
+|------|---------|
+| `../minio/values.yaml` | MinIO configuration (credentials, buckets) |
+| `../redis/values.yaml` | Redis configuration (password, persistence) |
+| `../mlflow/values.yaml` | MLflow configuration (backend store, artifact root) |
+| `../grafana/values.yaml` | Prometheus + Grafana configuration |
+
+### API Configuration
+
+| File | Purpose |
+|------|---------|
+| `api-configmap.yaml` | Non-sensitive config (endpoints, ports) |
+| `secrets.yaml.example` | Template for secrets (copy to secrets.yaml) |
+| `api-deployment.yaml` | Deployment spec (replicas, resources, probes) |
+| `api-hpa.yaml` | Auto-scaling configuration |
+
+### Default Credentials
+
+| Service | Username | Password |
+|---------|----------|----------|
+| MinIO | admin | admin123 |
+| Redis | - | redis123 |
+| PostgreSQL | mlflow | mlflow123 |
+| Grafana | admin | prom-operator |
+
+> **Production:** Change all default passwords before deploying to production!
+
+---
+
+## Customization
+
+### Using External Services
+
+For production with managed services (AWS RDS, ElastiCache, S3):
+
+1. **Update ConfigMap** (`api-configmap.yaml`):
+
+```yaml
+data:
+  DB_HOST: "your-rds.amazonaws.com"
+  DB_PORT: "5432"
+  REDIS_HOST: "your-elasticache.amazonaws.com"
+  MINIO_ENDPOINT: "s3.amazonaws.com"
+  MINIO_SECURE: "true"
+  MLFLOW_TRACKING_URI: "http://your-mlflow-server:5000"
+```
+
+2. **Update Secrets** (`secrets.yaml`):
+
+```bash
+# Generate base64 encoded values
+echo -n "your-db-password" | base64
+echo -n "your-redis-password" | base64
+echo -n "your-aws-access-key" | base64
+echo -n "your-aws-secret-key" | base64
+```
+
+3. **Skip Infrastructure Deployment**:
+
+```bash
+./scripts/k8s-bootstrap.sh --api-only
+```
+
+### Scaling Configuration
+
+Edit `api-hpa.yaml`:
+
+```yaml
+spec:
+  minReplicas: 2      # Minimum pods
+  maxReplicas: 10     # Maximum pods
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+```
+
 ### Resource Limits
 
-Current configuration (per pod):
+Edit `api-deployment.yaml`:
 
-- CPU Request: 500m (0.5 cores)
-- CPU Limit: 2000m (2 cores)
-- Memory Request: 1Gi
-- Memory Limit: 4Gi
+```yaml
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "2000m"
+    memory: "4Gi"
+```
 
-Adjust in `api-deployment.yaml` based on your needs.
+---
 
-### Auto-scaling
+## Monitoring
 
-HPA is configured to scale between 2-10 replicas based on:
-- CPU: 70% average utilization
-- Memory: 80% average utilization
+### Prometheus Metrics
 
-Modify `api-hpa.yaml` to change thresholds.
+The API exposes metrics at `/metrics`:
 
-### Health Checks
+```bash
+kubectl port-forward -n ml-pipeline svc/crypto-prediction-api 8000:8000
+curl http://localhost:8000/metrics
+```
 
-Three types of probes are configured:
+Key metrics:
+- `prediction_requests_total` - Total predictions by symbol/task
+- `prediction_duration_seconds` - Prediction latency
+- `loaded_models_total` - Number of loaded models
+- `http_requests_total` - HTTP request count
 
-1. **Liveness Probe**: Restarts container if unhealthy
-   - Endpoint: `/health`
-   - Initial delay: 30s
-   - Period: 10s
+### Grafana Dashboards
 
-2. **Readiness Probe**: Removes from service if not ready
-   - Endpoint: `/health`
-   - Initial delay: 10s
-   - Period: 5s
+1. Access Grafana:
+   ```bash
+   kubectl port-forward -n ml-pipeline svc/ml-monitoring-grafana 3000:80
+   ```
 
-3. **Startup Probe**: Allows longer startup time
-   - Endpoint: `/health`
-   - Failure threshold: 30 (5 minutes max)
+2. Login: admin / prom-operator
+
+3. Import dashboards from `../monitoring/grafana/dashboards/`
+
+### ServiceMonitor
+
+For automatic Prometheus discovery, uncomment in `kustomization.yaml`:
+
+```yaml
+resources:
+  - api-servicemonitor.yaml
+```
+
+---
 
 ## Troubleshooting
 
-### Pods Not Starting
+### Check Pod Status
 
 ```bash
+kubectl get pods -n ml-pipeline
+kubectl describe pod <pod-name> -n ml-pipeline
+kubectl logs <pod-name> -n ml-pipeline
+```
+
+### Common Issues
+
+#### Pods Stuck in Pending
+
+```bash
+# Check node resources
+kubectl describe nodes
+
 # Check pod events
 kubectl describe pod <pod-name> -n ml-pipeline
+```
 
+**Solutions:**
+- Increase Docker Desktop memory (8GB recommended)
+- Check for resource constraints in deployment
+
+#### Image Pull Errors
+
+```bash
+# Check image pull status
+kubectl describe pod <pod-name> -n ml-pipeline | grep -A5 Events
+```
+
+**Solutions:**
+- Verify image exists: `docker images | grep crypto-prediction-api`
+- For remote registries, create image pull secret
+
+#### CrashLoopBackOff
+
+```bash
 # Check logs
-kubectl logs <pod-name> -n ml-pipeline
-
-# Common issues:
-# - Image pull errors: Check image name and registry credentials
-# - Configuration errors: Verify ConfigMap and Secrets
-# - Resource constraints: Check node resources
-```
-
-### Pods Crashing
-
-```bash
-# View crash logs
 kubectl logs <pod-name> -n ml-pipeline --previous
-
-# Check if health checks are too aggressive
-# Increase initialDelaySeconds in api-deployment.yaml
 ```
 
-### HPA Not Scaling
+**Common causes:**
+- Missing secrets
+- Wrong service endpoints in ConfigMap
+- Health check failing
+
+#### MLflow Connection Issues
 
 ```bash
-# Check metrics server is installed
-kubectl get apiservice v1beta1.metrics.k8s.io
-
-# Check HPA status
-kubectl describe hpa crypto-prediction-api-hpa -n ml-pipeline
-
-# Install metrics-server if missing:
-kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# Test from API pod
+kubectl exec -it deployment/crypto-prediction-api -n ml-pipeline -- \
+  curl http://ml-mlflow:5000/health
 ```
 
-### Ingress Not Working
+#### Redis Connection Issues
 
 ```bash
-# Check ingress status
-kubectl describe ingress crypto-prediction-api-ingress -n ml-pipeline
-
-# Check ingress controller logs
-kubectl logs -n ingress-nginx deployment/ingress-nginx-controller
-
-# Verify DNS points to ingress IP
-kubectl get ingress -n ml-pipeline
+# Test from API pod
+kubectl exec -it deployment/crypto-prediction-api -n ml-pipeline -- \
+  python3 -c "import redis; r = redis.Redis(host='ml-redis-master', port=6379, password='redis123'); print(r.ping())"
 ```
 
-## Updating
-
-### Rolling Update
+### Reset Everything
 
 ```bash
-# Update image tag in deployment
-kubectl set image deployment/crypto-prediction-api \
-  api=your-registry.com/crypto-prediction-api:1.1.0 \
-  -n ml-pipeline
-
-# Or edit deployment
-kubectl edit deployment crypto-prediction-api -n ml-pipeline
-
-# Watch rollout
-kubectl rollout status deployment/crypto-prediction-api -n ml-pipeline
+./scripts/k8s-bootstrap.sh --cleanup
+./scripts/k8s-bootstrap.sh
 ```
 
-### Rollback
+---
 
-```bash
-# View rollout history
-kubectl rollout history deployment/crypto-prediction-api -n ml-pipeline
+## Files Reference
 
-# Rollback to previous version
-kubectl rollout undo deployment/crypto-prediction-api -n ml-pipeline
+| File | Description |
+|------|-------------|
+| `api-configmap.yaml` | Non-sensitive configuration |
+| `api-deployment.yaml` | Main API deployment (2 replicas) |
+| `api-service.yaml` | ClusterIP service |
+| `api-hpa.yaml` | Horizontal Pod Autoscaler |
+| `api-ingress.yaml` | Ingress (optional) |
+| `api-servicemonitor.yaml` | Prometheus ServiceMonitor (optional) |
+| `secrets.yaml.example` | Secrets template |
+| `kustomization.yaml` | Kustomize configuration |
+| `deploy.sh` | Legacy deployment script |
 
-# Rollback to specific revision
-kubectl rollout undo deployment/crypto-prediction-api --to-revision=2 -n ml-pipeline
-```
-
-### Update ConfigMap
-
-```bash
-# Edit configmap
-kubectl edit configmap ml-pipeline-config -n ml-pipeline
-
-# Restart pods to pick up changes
-kubectl rollout restart deployment/crypto-prediction-api -n ml-pipeline
-```
-
-## Cleanup
-
-```bash
-# Delete all resources
-kubectl delete -f .
-
-# Or with kustomize
-kubectl delete -k .
-
-# Delete namespace (WARNING: deletes everything)
-kubectl delete namespace ml-pipeline
-```
+---
 
 ## Production Checklist
 
 Before deploying to production:
 
-- [ ] Update all placeholder values in ConfigMap
-- [ ] Create and apply Secrets with real credentials
-- [ ] Update Docker image reference to your registry
-- [ ] Configure proper DNS for Ingress hostname
-- [ ] Set up TLS certificates (update Ingress)
-- [ ] Configure resource limits based on load testing
-- [ ] Set up monitoring and alerting
-- [ ] Test health check endpoints
-- [ ] Verify backup and disaster recovery procedures
-- [ ] Document runbooks for common issues
-- [ ] Set up log aggregation (ELK, Loki, etc.)
-- [ ] Configure network policies for security
-- [ ] Set up pod disruption budgets for high availability
+- [ ] Change all default passwords
+- [ ] Update ConfigMap with production endpoints
+- [ ] Create secrets with production credentials
+- [ ] Push Docker image to production registry
+- [ ] Update image reference in kustomization.yaml
+- [ ] Configure Ingress with TLS
+- [ ] Set appropriate resource limits
+- [ ] Configure backup for PostgreSQL
+- [ ] Set up alerting rules
+- [ ] Test failover and recovery
+- [ ] Document runbooks
 
-## Security Considerations
+---
 
-1. **Secrets Management**:
-   - Never commit `secrets.yaml` to git
-   - Consider using external secret managers (Vault, AWS Secrets Manager, etc.)
-   - Rotate secrets regularly
+## Architecture
 
-2. **Network Security**:
-   - Use NetworkPolicies to restrict pod communication
-   - Enable TLS for all external endpoints
-   - Limit ingress to specific IPs if possible
+```
+                                    +-------------------------------------+
+                                    |         Kubernetes Cluster          |
+                                    |                                     |
+                                    |  +-------------------------------+  |
+                                    |  |     ml-pipeline namespace     |  |
++----------+                        |  |                               |  |
+|  Client  |----------------------->|  |   +-----------------------+   |  |
++----------+                        |  |   |  Inference API (HPA)  |   |  |
+                                    |  |   |   crypto-prediction   |   |  |
+                                    |  |   |    2-10 replicas      |   |  |
+                                    |  |   +-----------+-----------+   |  |
+                                    |  |               |               |  |
+                                    |  |     +---------+---------+     |  |
+                                    |  |     |         |         |     |  |
+                                    |  |     v         v         v     |  |
+                                    |  | +-------+ +-------+ +-------+ |  |
+                                    |  | |MLflow | | Redis | | MinIO | |  |
+                                    |  | | :5000 | | :6379 | | :9000 | |  |
+                                    |  | +---+---+ +-------+ +-------+ |  |
+                                    |  |     |                         |  |
+                                    |  |     v                         |  |
+                                    |  | +---------+                   |  |
+                                    |  | |PostgreSQL|                  |  |
+                                    |  | |  :5432  |                   |  |
+                                    |  | +---------+                   |  |
+                                    |  |                               |  |
+                                    |  | +---------------------------+ |  |
+                                    |  | |  Monitoring (Prometheus   | |  |
+                                    |  | |    + Grafana)             | |  |
+                                    |  | +---------------------------+ |  |
+                                    |  |                               |  |
+                                    |  +-------------------------------+  |
+                                    +-------------------------------------+
+```
 
-3. **RBAC**:
-   - Create service accounts with minimal permissions
-   - Use Pod Security Policies or Pod Security Standards
-   - Audit access regularly
-
-4. **Image Security**:
-   - Scan images for vulnerabilities
-   - Use specific tags, not `:latest`
-   - Pull from trusted registries only
+---
 
 ## Support
 
-For issues or questions:
-- Check application logs: `kubectl logs -f deployment/crypto-prediction-api -n ml-pipeline`
-- Review pod events: `kubectl describe pod <pod-name> -n ml-pipeline`
-- Check this README and NEXT_STEPS.md in the project root
+- Validate deployment: `./scripts/validate-deployment.sh --env k8s`
+- Check logs: `kubectl logs -f deployment/crypto-prediction-api -n ml-pipeline`
+- Status: `./scripts/k8s-bootstrap.sh --status`

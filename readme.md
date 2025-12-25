@@ -20,14 +20,11 @@ An ML inference boilerplate that provides the infrastructure to serve your train
 - ✅ **Inference API** (FastAPI) - REST API with auto-docs
 - ✅ **Monitoring** (Prometheus + Grafana) - Metrics and dashboards
 - ✅ **Docker Image** - Production-ready container builds successfully
-
-**Work in Progress (Not Tested):**
-- ⚠️ **Kubernetes Deployment** - Manifests and Helm charts exist, not validated yet
-- ⚠️ **Production Setup** - Needs testing in live K8s cluster
+- ✅ **Kubernetes Deployment** - Fully tested on Docker Desktop K8s (ARM64/Apple Silicon)
 
 **What's Coming:**
 - ⏳ **Training Pipeline** - Automated model training and registration
-- ⏳ **Validated K8s Deployment** - Fully tested production setup
+- ⏳ **Cloud Provider Examples** - AWS EKS, GCP GKE, Azure AKS templates
 
 ---
 
@@ -44,6 +41,9 @@ docker-compose up -d
 
 # Verify services are running
 docker-compose ps
+
+# Run validation to confirm everything works
+./scripts/validate-deployment.sh --env docker
 ```
 
 You now have:
@@ -132,183 +132,62 @@ curl -X POST "http://localhost:8000/predict/BTCUSDT" \
 
 ## 📦 Production Deployment (Kubernetes)
 
-> **⚠️ STATUS: WORK IN PROGRESS - NOT FULLY TESTED**
->
-> The Kubernetes manifests and Helm charts exist but have not been validated in a live cluster yet.
+> **✅ TESTED:** Docker Desktop Kubernetes (ARM64/Apple Silicon)
 
 **Docker Compose is for local testing only. For production, use Kubernetes deployment.**
 
-### Two Deployment Options
-
-#### Option 1: Helm Charts (Recommended - UNTESTED)
-
-Deploy supporting services using Helm:
-- MLflow with PostgreSQL backend
-- MinIO for object storage
-- Grafana + Prometheus for monitoring
-- (Optional) Airflow for training workflows
-
-**See [k8s/HELM_DEPLOYMENT.md](k8s/HELM_DEPLOYMENT.md) for detailed Helm deployment guide.**
-
-#### Option 2: External Services
-
-Use managed services from cloud providers:
-- AWS RDS (PostgreSQL)
-- AWS ElastiCache (Redis)
-- AWS S3 (object storage)
-- Managed MLflow or self-hosted
-
-### Prerequisites
-- Kubernetes cluster (1.19+)
-- kubectl configured
-- Helm 3 (for Helm deployment option)
-- Docker registry (Docker Hub, ECR, GCR, etc.)
-- Supporting services (via Helm or external)
-
-### Step 1: Build and Push Docker Image
+### One-Command Deployment
 
 ```bash
-# Build inference API image
-docker build -t your-registry/ml-inference-api:1.0.0 -f docker/Dockerfile.inference .
+# Deploy complete infrastructure + API
+./scripts/k8s-bootstrap.sh
 
-# Push to registry
-docker push your-registry/ml-inference-api:1.0.0
+# Validate everything is working
+./scripts/validate-deployment.sh --env k8s
 ```
 
-### Step 2: Update Image in Deployment
+This deploys:
+- MinIO (S3-compatible storage)
+- Redis (feature caching)
+- PostgreSQL (MLflow backend)
+- MLflow (model registry)
+- Prometheus + Grafana (monitoring)
+- Inference API (2 replicas with HPA)
 
-Edit `k8s/api-deployment.yaml`:
-```yaml
-spec:
-  template:
-    spec:
-      containers:
-      - name: api
-        image: your-registry/ml-inference-api:1.0.0  # Update this
-```
-
-### Step 3: Create Kubernetes Secrets
+### Access Services
 
 ```bash
-# Copy example and edit with your credentials
-cp k8s/secrets.yaml.example k8s/secrets.yaml
-
-# Edit k8s/secrets.yaml with:
-# - Database credentials (your external PostgreSQL)
-# - MinIO/S3 credentials (your external S3)
-# - Redis password (your external Redis)
-
-# Create namespace and secret
-kubectl create namespace ml-pipeline
-kubectl apply -f k8s/secrets.yaml
-```
-
-### Step 4: Update ConfigMap
-
-Edit `k8s/api-configmap.yaml` with your external services:
-```yaml
-data:
-  # Your external MLflow server
-  MLFLOW_TRACKING_URI: "http://your-mlflow-server:5000"
-
-  # Your external PostgreSQL
-  DB_HOST: "your-postgres-host.rds.amazonaws.com"
-  DB_PORT: "5432"
-  DB_NAME: "your_database"
-
-  # Your external Redis
-  REDIS_HOST: "your-redis-host.cache.amazonaws.com"
-  REDIS_PORT: "6379"
-
-  # Your external MinIO/S3
-  MINIO_ENDPOINT: "s3.amazonaws.com"  # or your MinIO endpoint
-  MINIO_SECURE: "true"
-
-  # Your entities
-  BINANCE_SYMBOLS: '["ENTITY1","ENTITY2","ENTITY3"]'
-```
-
-### Step 5: Deploy to Kubernetes
-
-```bash
-# Apply all resources
-kubectl apply -f k8s/
-
-# Verify deployment
-kubectl get pods -n ml-pipeline
-kubectl get svc -n ml-pipeline
-kubectl get hpa -n ml-pipeline
-
-# Check logs
-kubectl logs -n ml-pipeline -l app=crypto-prediction-api --tail=100
-```
-
-### Step 6: Access the API
-
-**Option 1: Port Forward (for testing)**
-```bash
+# API
 kubectl port-forward -n ml-pipeline svc/crypto-prediction-api 8000:8000
 curl http://localhost:8000/health
+
+# MLflow UI
+kubectl port-forward -n ml-pipeline svc/ml-mlflow 5000:5000
+open http://localhost:5000
+
+# Grafana
+kubectl port-forward -n ml-pipeline svc/ml-monitoring-grafana 3000:80
+open http://localhost:3000  # admin / prom-operator
 ```
 
-**Option 2: Configure Ingress (for production)**
+### Cleanup
 
-Edit `k8s/api-ingress.yaml` with your domain:
-```yaml
-spec:
-  rules:
-  - host: api.yourdomain.com  # Update this
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: crypto-prediction-api
-            port:
-              number: 8000
-  tls:
-  - hosts:
-    - api.yourdomain.com  # Update this
-    secretName: api-tls-cert  # Your TLS certificate secret
-```
-
-Then deploy:
 ```bash
-kubectl apply -f k8s/api-ingress.yaml
+./scripts/k8s-bootstrap.sh --cleanup
 ```
 
-Access via: `https://api.yourdomain.com`
+**For detailed Kubernetes deployment guide, see [k8s/README.md](k8s/README.md)**
 
 ### Production Features Included
 
-| Feature | File | What It Does |
-|---------|------|--------------|
-| **Auto-scaling** | `k8s/api-hpa.yaml` | Scales 2-10 pods based on CPU/memory (70%/80%) |
-| **Health Probes** | `k8s/api-deployment.yaml` | Liveness, readiness, startup probes |
-| **Rolling Updates** | `k8s/api-deployment.yaml` | Zero-downtime deployments (maxSurge: 1, maxUnavailable: 0) |
-| **Resource Limits** | `k8s/api-deployment.yaml` | CPU: 500m-2000m, Memory: 1Gi-4Gi |
-| **Monitoring** | `k8s/api-servicemonitor.yaml` | Prometheus scraping configured |
-| **Load Balancing** | `k8s/api-service.yaml` | ClusterIP service with pod distribution |
-| **Ingress** | `k8s/api-ingress.yaml` | External access with SSL/TLS |
-| **Security** | `k8s/api-deployment.yaml` | Non-root user (UID 1000), secrets management |
-
-### Monitoring in Production
-
-**Prometheus Scraping:**
-- ServiceMonitor configured for automatic discovery
-- Metrics endpoint: `/metrics`
-- Scrape interval: 30s
-
-**Grafana Dashboards:**
-- Import dashboards from `monitoring/grafana/`
-- Connect to your Prometheus instance
-- Pre-configured for API metrics
-
-**Scaling Behavior:**
-- Scales up: 100% increase or +4 pods per 30s (whichever is higher)
-- Scales down: 50% decrease or -2 pods per 60s (whichever is lower)
-- Stabilization: 60s for scale-up, 300s for scale-down
+| Feature | What It Does |
+|---------|--------------|
+| **Auto-scaling** | HPA scales 2-10 pods based on CPU (70%) / Memory (80%) |
+| **Health Probes** | Liveness, readiness, startup probes configured |
+| **Rolling Updates** | Zero-downtime deployments |
+| **Resource Limits** | CPU: 500m-2000m, Memory: 1Gi-4Gi |
+| **Monitoring** | Prometheus + Grafana with ServiceMonitor |
+| **Security** | Non-root user, secrets management |
 
 ---
 
@@ -623,6 +502,10 @@ kubectl top pods -n ml-pipeline
 │   ├── production_api.py         # FastAPI application
 │   └── requirements.txt          # Python dependencies
 │
+├── scripts/                      # Deployment & Validation Scripts
+│   ├── k8s-bootstrap.sh          # One-command K8s deployment
+│   └── validate-deployment.sh    # Validate Docker/K8s deployments
+│
 ├── dags/                         # ML Pipeline
 │   ├── inference_feature_pipeline.py  # Inference logic & task definitions
 │   ├── feature_eng.py            # Feature engineering functions
@@ -632,26 +515,36 @@ kubectl top pods -n ml-pipeline
 ├── k8s/                          # Kubernetes Manifests (PRODUCTION)
 │   ├── api-deployment.yaml       # Deployment spec with health probes
 │   ├── api-service.yaml          # Service for load balancing
-│   ├── api-hpa.yaml             # HorizontalPodAutoscaler
-│   ├── api-ingress.yaml         # External access
-│   ├── api-configmap.yaml       # Configuration
-│   ├── api-servicemonitor.yaml  # Prometheus integration
-│   ├── secrets.yaml.example     # Secrets template
-│   └── kustomization.yaml       # Kustomize config
+│   ├── api-hpa.yaml              # HorizontalPodAutoscaler
+│   ├── api-ingress.yaml          # External access
+│   ├── api-configmap.yaml        # Configuration
+│   ├── api-servicemonitor.yaml   # Prometheus integration
+│   ├── secrets.yaml.example      # Secrets template
+│   ├── kustomization.yaml        # Kustomize config
+│   └── README.md                 # Detailed K8s deployment guide
+│
+├── minio/                        # MinIO Helm values
+│   └── values.yaml
+├── redis/                        # Redis Helm values
+│   └── values.yaml
+├── mlflow/                       # MLflow Helm values
+│   └── values.yaml
+├── grafana/                      # Grafana Helm values
+│   └── values.yaml
 │
 ├── docker/                       # Docker Images
-│   └── Dockerfile.inference     # Production API image
+│   └── Dockerfile.inference      # Production API image
 │
 ├── src/config/                   # Configuration Management
-│   └── settings.py              # Pydantic settings
+│   └── settings.py               # Pydantic settings
 │
 ├── monitoring/                   # Monitoring Stack
-│   ├── prometheus.yml           # Prometheus configuration
-│   └── grafana/                 # Grafana dashboards
+│   ├── prometheus.yml            # Prometheus configuration
+│   └── grafana/                  # Grafana dashboards
 │
-├── docker-compose.yml           # Local testing (NOT for production)
-├── .env.example                 # Environment variables template
-└── README.md                    # This file
+├── docker-compose.yml            # Local testing (NOT for production)
+├── .env.example                  # Environment variables template
+└── README.md                     # This file
 ```
 
 ---
