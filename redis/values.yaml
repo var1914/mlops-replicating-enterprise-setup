@@ -1,0 +1,34 @@
+# Redis Helm Chart Values
+# Chart: bitnami/redis
+# Minimal configuration for ML inference caching
+
+# Architecture - standalone for simplicity (use replication for HA)
+architecture: standalone
+
+# Authentication
+auth:
+  enabled: true
+  password: "redis123"
+
+# Master configuration
+master:
+  persistence:
+    enabled: true
+    size: 2Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Disable replica for standalone mode
+replica:
+  replicaCount: 0
+
+# Metrics for Prometheus
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false  # Set to true if using Prometheus Operator

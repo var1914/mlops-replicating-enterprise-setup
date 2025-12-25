@@ -1,53 +1,88 @@
-# # MLflow Tracking Server Configuration
-tracking:
-  # Enable the tracking server
-  enabled: true
-  # Number of replicas
-  replicaCount: 1
-  
-  # Authentication Configuration
-  auth:
-    # Enable basic authentication
-    enabled: false
+# MLflow Tracking Server Configuration
+# Chart: community-charts/mlflow
+#
+# Prerequisites:
+#   - PostgreSQL deployed separately (see k8s/postgresql.yaml)
+#   - MinIO deployed via Helm (ml-minio)
 
+# Image configuration
+image:
+  repository: burakince/mlflow
+  pullPolicy: IfNotPresent
+  tag: ""
+
+# Init container images - use ARM64 compatible images
+initImages:
+  dbchecker:
+    repository: alpine
+    pullPolicy: IfNotPresent
+    tag: "3.19"
+  mlflowDbMigration:
+    repository: burakince/mlflow
+    pullPolicy: IfNotPresent
+    tag: ""
+  iniFileInitializer:
+    repository: alpine
+    pullPolicy: IfNotPresent
+    tag: "3.19"
+
+# Service configuration
 service:
-  # Set service type to ClusterIP (NOT LoadBalancer)
+  enabled: true
   type: ClusterIP
-  ports:
-    http: 5000
+  port: 5000
+  containerPort: 5000
 
-minio:
+# Backend Store - PostgreSQL
+backendStore:
+  databaseMigration: false
+  databaseConnectionCheck: false
+
+  postgres:
+    enabled: true
+    host: "postgresql"
+    port: 5432
+    database: "mlflow"
+    user: "mlflow"
+    password: "mlflow123"
+    driver: ""
+
+# Artifact Root - MinIO/S3
+artifactRoot:
+  proxiedArtifactStorage: false
+
+  s3:
+    enabled: true
+    bucket: "mlflow-artifacts"
+    path: ""
+    awsAccessKeyId: "admin"
+    awsSecretAccessKey: "admin123"
+
+# Extra environment variables for MinIO endpoint
+extraEnvVars:
+  MLFLOW_S3_ENDPOINT_URL: "http://ml-minio:9000"
+  MLFLOW_S3_IGNORE_TLS: "true"
+  AWS_DEFAULT_REGION: "us-east-1"
+
+# Disable built-in PostgreSQL (we deploy separately)
+postgresql:
   enabled: false
 
-# Database Configuration (PostgreSQL backend)
-postgresql:
-  enabled: true
-  auth:
-    postgresPassword: "mlflow123"
-    database: "mlflowdb"
-    username: "mlflow"
-    password: "mlflow123"
-  primary:
-    persistence:
-      enabled: true
-      size: 10Gi
+# Resources
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
 
-# Persistent Volume for MLflow data
-persistence:
-  enabled: true
-  size: 5Gi
-  accessModes:
-    - ReadWriteOnce
+# Pod security context
+podSecurityContext:
+  fsGroup: 1001
 
-# Environment Variables for S3/MinIO Configuration
-extraEnvVars:
-  - name: MLFLOW_S3_ENDPOINT_URL
-    value: "http://minio:9000"  # Replace with your MinIO service endpoint
-  - name: MLFLOW_S3_IGNORE_TLS
-    value: "true"
-  - name: AWS_ACCESS_KEY_ID
-    value: "admin"  # Replace with your MinIO access key
-  - name: AWS_SECRET_ACCESS_KEY
-    value: "admin123"  # Replace with your MinIO secret key
-
-defaultArtifactRoot: "s3://mlflow-artifacts"
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
