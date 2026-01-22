@@ -1,0 +1,59 @@
+# Airflow Custom Image for ML Pipeline
+# Includes all dependencies for ETL and ML training tasks
+#
+# Build:
+#   docker build -t custom-airflow:latest -f docker/Dockerfile.airflow .
+#
+# For local registry:
+#   docker build -t localhost:5050/custom-airflow:0.0.7 -f docker/Dockerfile.airflow .
+#   docker push localhost:5050/custom-airflow:0.0.7
+
+FROM apache/airflow:3.0.2-python3.12
+
+# Install Python packages for ETL and ML as airflow user
+USER airflow
+
+RUN pip install --no-cache-dir \
+    # Database
+    psycopg2-binary \
+    # Object storage
+    minio \
+    boto3 \
+    # Data processing
+    pandas \
+    numpy \
+    pyarrow \
+    # ML libraries
+    scikit-learn \
+    lightgbm \
+    xgboost \
+    # MLflow
+    mlflow \
+    # HTTP
+    requests \
+    urllib3 \
+    # Redis
+    redis \
+    # Monitoring
+    prometheus-client \
+    # Visualization
+    matplotlib \
+    seaborn \
+    plotly \
+    # Additional utilities
+    joblib \
+    pydantic \
+    pydantic-settings
+
+# Copy DAGs and supporting modules
+COPY --chown=airflow:root dags/ /opt/airflow/dags/
+COPY --chown=airflow:root src/ /opt/airflow/src/
+
+# Set Python path to include src
+ENV PYTHONPATH="/opt/airflow/src:/opt/airflow/dags"
+
+# Create directories for logs and plugins
+RUN mkdir -p /opt/airflow/logs /opt/airflow/plugins
+
+# Set working directory
+WORKDIR /opt/airflow

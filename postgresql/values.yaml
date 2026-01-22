@@ -1,0 +1,107 @@
+# =============================================================================
+# PostgreSQL Helm Chart Values - Single Instance, Three Databases
+# =============================================================================
+# Databases:
+#   1. mlflow   - MLflow experiment tracking metadata (user: mlflow)
+#   2. crypto   - ETL raw data from Binance API (user: crypto)
+#   3. airflow  - Airflow metadata database (user: airflow)
+#
+# Install:
+#   helm upgrade --install postgresql bitnami/postgresql \
+#     --namespace ml-pipeline \
+#     --values postgresql/values.yaml
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Primary Database Authentication (default database)
+# -----------------------------------------------------------------------------
+auth:
+  # Default database for MLflow
+  database: mlflow
+  username: mlflow
+  password: mlflow123
+  # Postgres superuser password
+  postgresPassword: postgres123
+
+# -----------------------------------------------------------------------------
+# Primary Configuration
+# -----------------------------------------------------------------------------
+primary:
+  # Persistence
+  persistence:
+    enabled: true
+    size: 20Gi
+    accessModes:
+      - ReadWriteOnce
+
+  # Resources - sized for both workloads
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # Init scripts to create additional databases and tables
+  initdb:
+    scripts:
+      01-create-crypto-db.sql: |
+        -- Create crypto database and user for ETL data
+        CREATE DATABASE crypto;
+        CREATE USER crypto WITH ENCRYPTED PASSWORD 'crypto123';
+        GRANT ALL PRIVILEGES ON DATABASE crypto TO crypto;
+
+        -- Create airflow database and user for Airflow metadata
+        CREATE DATABASE airflow;
+        CREATE USER airflow WITH ENCRYPTED PASSWORD 'airflow123';
+        GRANT ALL PRIVILEGES ON DATABASE airflow TO airflow;
+
+      02-create-crypto-tables.sql: |
+        -- Connect to crypto database and create tables
+        \c crypto
+
+        -- Create crypto_data table for ETL pipeline
+        CREATE TABLE IF NOT EXISTS crypto_data (
+            id SERIAL PRIMARY KEY,
+            symbol VARCHAR(20) NOT NULL,
+            open_time BIGINT NOT NULL,
+            open_price NUMERIC(20, 8) NOT NULL,
+            high_price NUMERIC(20, 8) NOT NULL,
+            low_price NUMERIC(20, 8) NOT NULL,
+            close_price NUMERIC(20, 8) NOT NULL,
+            volume NUMERIC(30, 8) NOT NULL,
+            close_time BIGINT NOT NULL,
+            quote_volume NUMERIC(30, 8) NOT NULL,
+            num_trades INTEGER NOT NULL,
+            taker_buy_base NUMERIC(30, 8) NOT NULL,
+            taker_buy_quote NUMERIC(30, 8) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(symbol, open_time)
+        );
+
+        -- Create indexes for efficient querying
+        CREATE INDEX IF NOT EXISTS idx_crypto_symbol ON crypto_data(symbol);
+        CREATE INDEX IF NOT EXISTS idx_crypto_open_time ON crypto_data(open_time);
+        CREATE INDEX IF NOT EXISTS idx_crypto_symbol_time ON crypto_data(symbol, open_time);
+
+        -- Grant permissions to crypto user
+        GRANT ALL PRIVILEGES ON TABLE crypto_data TO crypto;
+        GRANT USAGE, SELECT ON SEQUENCE crypto_data_id_seq TO crypto;
+
+# -----------------------------------------------------------------------------
+# Service Configuration
+# -----------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  ports:
+    postgresql: 5432
+
+# Service name will be: postgresql
+fullnameOverride: postgresql
+
+# -----------------------------------------------------------------------------
+# Metrics
+# -----------------------------------------------------------------------------
+metrics:
+  enabled: false

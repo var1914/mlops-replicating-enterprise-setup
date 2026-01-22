@@ -1,38 +1,123 @@
-# In your Helm values.yaml
+# Airflow Helm values.yaml
 
-# Custom Docker image configuration
+# Custom Docker image
 images:
   airflow:
     repository: localhost:5050/custom-airflow
-    tag: 0.0.4
+    tag: 0.0.8
     pullPolicy: Always
 
-dags:
-  persistence:
-    enabled: true
-    size: 1Gi
-
-webserver:
-  defaultUser:
-    username: admin
-    password: admin123
-
+# Executor
 executor: "KubernetesExecutor"
 
+# Webserver
+webserver:
+  defaultUser:
+    enabled: true
+    username: admin
+    password: admin123
+  waitForMigrations:
+    enabled: false
+
+# Scheduler
+scheduler:
+  waitForMigrations:
+    enabled: false
+
+# Triggerer
+triggerer:
+  waitForMigrations:
+    enabled: false
+
+# Dag Processor
+dagProcessor:
+  waitForMigrations:
+    enabled: false
+
+# API Server (Airflow 3.0)
+apiServer:
+  waitForMigrations:
+    enabled: false
+
+# DAGs persistence - disabled because DAGs are baked into custom Docker image
+dags:
+  persistence:
+    enabled: false
+
+# Workers
 workers:
   persistence:
     enabled: true
 
+# Logs - disabled because local-path provisioner doesn't support ReadWriteMany
+# For production, use cloud storage (S3/GCS) for remote logging
 logs:
   persistence:
-    enabled: true
-    size: 5Gi
+    enabled: false
 
+# Disable built-in PostgreSQL - use external
+postgresql:
+  enabled: false
+
+# External PostgreSQL connection
+data:
+  metadataConnection:
+    host: postgresql
+    port: 5432
+    user: airflow
+    pass: airflow123
+    db: airflow
+    protocol: postgresql
+
+# Disable migration wait - we already ran migrations
+waitForMigrations:
+  enabled: false
+
+# Disable migration job (already done)
+migrateDatabaseJob:
+  enabled: false
+
+# Config
 config:
+  core:
+    load_examples: "False"
+    dags_folder: /opt/airflow/dags/airflow_dags
+  database:
+    # Increase migration wait timeout from default 60 to 300 seconds
+    migrations_wait_timeout: 300
   logging:
-    remote_logging: "False"  # Keep local for testing
+    remote_logging: "False"
     colored_console_log: "True"
 
+# Environment variables (applied to all Airflow components)
 env:
+  - name: PYTHONPATH
+    value: /opt/airflow/src:/opt/airflow/dags
   - name: AIRFLOW__LOGGING__BASE_LOG_FOLDER
     value: /opt/airflow/logs
+  - name: AIRFLOW__DATABASE__MIGRATIONS_WAIT_TIMEOUT
+    value: "300"
+  - name: MLFLOW_TRACKING_URI
+    value: http://ml-mlflow:5000
+  - name: MINIO_ENDPOINT
+    value: minio:9000
+  - name: MINIO_ACCESS_KEY
+    value: admin
+  - name: MINIO_SECRET_KEY
+    value: admin123
+  - name: DB_HOST
+    value: postgresql
+  - name: DB_PORT
+    value: "5432"
+  - name: DB_USER
+    value: crypto
+  - name: DB_PASSWORD
+    value: crypto123
+  - name: DB_NAME
+    value: crypto
+  - name: REDIS_HOST
+    value: ml-redis-master
+  - name: REDIS_PORT
+    value: "6379"
+  - name: REDIS_PASSWORD
+    value: redis123

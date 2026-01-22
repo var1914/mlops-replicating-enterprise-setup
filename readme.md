@@ -1,56 +1,161 @@
-# ML Inference Infrastructure Boilerplate
+# ML Engineering Platform with MLOps
 
-**From trained models to production serving in minutes.**
+**Complete ML platform: ETL → Features → Training → Serving → Monitoring**
 
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue)](https://www.docker.com/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Ready-326CE5)](https://kubernetes.io/)
+[![Airflow](https://img.shields.io/badge/Airflow-3.0-017CEE)](https://airflow.apache.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Note:** This boilerplate focuses on **inference/serving infrastructure**. Training pipeline integration is on the roadmap.
+> **Production-ready ML platform** with unified ETL and ML pipelines orchestrated by Apache Airflow 3.0 on Kubernetes.
 
 ---
 
 ## 🎯 What Is This?
 
-An ML inference boilerplate that provides the infrastructure to serve your trained models:
+A complete ML engineering platform that provides end-to-end infrastructure:
 
 **What's Working Now:**
-- ✅ **Local Testing** (Docker Compose) - Full stack with MLflow, API, monitoring in 5 minutes
+- ✅ **ETL Pipeline** - Binance API → MinIO → PostgreSQL (2.25M records loaded, verified)
+- ✅ **ML Training Pipeline** - Features → Training → MLflow → API (Airflow DAG)
 - ✅ **Model Registry** (MLflow) - Version control and stage-based deployment
 - ✅ **Inference API** (FastAPI) - REST API with auto-docs
 - ✅ **Monitoring** (Prometheus + Grafana) - Metrics and dashboards
-- ✅ **Docker Image** - Production-ready container builds successfully
 - ✅ **Kubernetes Deployment** - Fully tested on Docker Desktop K8s (ARM64/Apple Silicon)
+- ✅ **Apache Airflow 3.0** - Unified orchestration with KubernetesExecutor
+
+**Pipeline Architecture:**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          Apache Airflow (Orchestration)                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ETL Pipeline (etl_crypto_data_pipeline)                                    │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐              │
+│  │ Binance  │───▶│  MinIO   │───▶│Transform │───▶│PostgreSQL│              │
+│  │   API    │    │  (Raw)   │    │  (ETL)   │    │ (Crypto) │              │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘              │
+│                                                         │                   │
+│  ML Pipeline (ml_training_pipeline)                     ▼                   │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐              │
+│  │ Feature  │───▶│  Model   │───▶│  MLflow  │───▶│Inference │              │
+│  │   Eng    │    │ Training │    │ Registry │    │   API    │              │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘              │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 **What's Coming:**
-- ⏳ **Training Pipeline** - Automated model training and registration
 - ⏳ **Cloud Provider Examples** - AWS EKS, GCP GKE, Azure AKS templates
 
 ---
 
-## 🚀 Quick Start (Local Testing)
+## 🚀 Quick Start (Kubernetes - Recommended)
 
-### Step 1: Start Infrastructure (5 minutes)
+### Prerequisites
+
+- **Docker Desktop** with Kubernetes enabled (Settings → Kubernetes → Enable Kubernetes)
+- **kubectl**: `brew install kubectl`
+- **Helm**: `brew install helm`
+- Minimum resources: 8GB RAM, 4 CPUs
+
+### One-Command Deployment
+
 ```bash
 # Clone repository
 git clone <repo-url>
-cd mlops-boilerplate
+cd ml-eng-with-ops
 
-# Start all services with Docker Compose (for local testing)
-docker-compose up -d
-
-# Verify services are running
-docker-compose ps
-
-# Run validation to confirm everything works
-./scripts/validate-deployment.sh --env docker
+# Deploy everything (infrastructure + Airflow + ETL/ML pipelines)
+./scripts/k8s-bootstrap.sh --infra-only
 ```
 
-You now have:
-- **MLflow UI**: http://localhost:5001 - Model registry
-- **API Docs**: http://localhost:8000/docs - Interactive API
-- **Grafana**: http://localhost:3000 (admin/admin) - Dashboards
-- **Prometheus**: http://localhost:9090 - Metrics
+**What gets deployed** (5-10 minutes):
+- MinIO (S3-compatible storage for raw data and artifacts)
+- Redis (caching layer)
+- PostgreSQL (2 databases: `crypto` for ETL data, `airflow` for metadata)
+- MLflow (experiment tracking and model registry)
+- Prometheus + Grafana (monitoring stack)
+- Apache Airflow 3.0 (orchestration with KubernetesExecutor)
+
+### Access Services
+
+Port-forward to access the UIs:
+
+```bash
+# Airflow UI
+kubectl port-forward -n ml-pipeline svc/airflow-api-server 8080:8080
+# Open: http://localhost:8080 (admin / admin123)
+
+# MinIO Console
+kubectl port-forward -n ml-pipeline svc/minio 9000:9000 9001:9001
+# Open: http://localhost:9001 (admin / admin123)
+
+# MLflow UI
+kubectl port-forward -n ml-pipeline svc/ml-mlflow 5000:5000
+# Open: http://localhost:5000
+
+# Grafana
+kubectl port-forward -n ml-pipeline svc/ml-monitoring-grafana 3000:80
+# Open: http://localhost:3000 (admin / prom-operator)
+```
+
+### Run ETL Pipeline
+
+1. **Open Airflow UI**:
+   - Access: http://localhost:8080
+   - Login: `admin` / `admin123`
+
+2. **Enable and Trigger DAG**:
+   - Find the `etl_crypto_data_pipeline` DAG
+   - Toggle it to "On"
+   - Click the play button to trigger manually
+
+3. **Monitor Execution**:
+   - Watch task progress in the Grid view
+   - View logs for each task (Note: logs disappear after pod deletion - this is a known limitation)
+
+4. **Verify Data Loaded**:
+   ```bash
+   kubectl exec -n ml-pipeline postgresql-0 -- \
+     psql -U postgres -d crypto -c "SELECT symbol, COUNT(*) FROM crypto_data GROUP BY symbol;"
+   ```
+
+**Expected Results**:
+```
+   symbol    | count
+-------------+--------
+ BTCUSDT    | 250000
+ ETHUSDT    | 250000
+ BNBUSDT    | 250000
+ SOLUSDT    | 250000
+ ADAUSDT    | 250000
+ XRPUSDT    | 250000
+ DOTUSDT    | 250000
+ AVAXUSDT   | 186728  (less historical data on Binance)
+ MATICUSDT  | 250000
+ LINKUSDT   | 250000
+-------------+--------
+Total: ~2.25 million records
+```
+
+**What the ETL Pipeline Does**:
+- **Extraction**: Fetches OHLCV data from Binance API (`/api/v3/klines`)
+  - 10 cryptocurrency symbols
+  - 15-minute interval candles
+  - Up to 250,000 records per symbol (configurable in [dags/etl/config.py](dags/etl/config.py))
+  - Pagination with 1000 records per batch
+  - Rate limiting and retry logic
+
+- **Storage**: Saves raw JSON to MinIO
+  - Bucket: `crypto-raw-data`
+  - Structure: `date=YYYY-MM-DD/symbol=SYMBOL/batch_XXX.json`
+  - Includes metadata: batch_id, record count, extraction time
+
+- **Loading**: Transforms and loads to PostgreSQL
+  - Calculates buy ratio: `(taker_buy_volume / total_volume) * 100`
+  - Bulk insert with upsert logic: `ON CONFLICT (symbol, open_time) DO UPDATE`
+  - Indexes on symbol, open_time for query performance
 
 ### Step 2: Register Your Model in MLflow
 
@@ -130,6 +235,166 @@ curl -X POST "http://localhost:8000/predict/BTCUSDT" \
 
 ---
 
+## ⚙️ Apache Airflow 3.0 Configuration
+
+### Key Architecture Decisions
+
+**Executor**: KubernetesExecutor
+- Each task runs in a separate Kubernetes pod
+- Automatic scaling based on task concurrency
+- Pods are deleted after task completion (saves resources)
+
+**DAG Deployment**: Baked into Custom Docker Image
+- DAGs are included in the Docker image at build time
+- No need for DAG persistence volumes
+- Faster deployment and consistent across all pods
+- **Critical**: Must disable `dags.persistence.enabled: false` in [airflow/values.yaml](airflow/values.yaml#L43-L45)
+
+**Database Migrations**: Separate Kubernetes Job
+- Migrations run BEFORE Helm deployment in a dedicated Job
+- **Critical**: Must disable `waitForMigrations.enabled: false` for all components
+- Prevents init container timeouts
+- Located in [scripts/k8s-bootstrap.sh](scripts/k8s-bootstrap.sh#L358-L393)
+
+**Custom Airflow Image**: [docker/Dockerfile.airflow](docker/Dockerfile.airflow)
+```dockerfile
+FROM apache/airflow:3.0.2-python3.12
+
+USER airflow
+RUN pip install --no-cache-dir \
+    psycopg2-binary minio boto3 pandas numpy pyarrow \
+    scikit-learn lightgbm xgboost mlflow requests redis \
+    prometheus-client
+
+COPY --chown=airflow:root dags/ /opt/airflow/dags/
+COPY --chown=airflow:root src/ /opt/airflow/src/
+ENV PYTHONPATH="/opt/airflow/src:/opt/airflow/dags"
+```
+
+Build and push:
+```bash
+docker build -t localhost:5050/custom-airflow:0.0.6 -f docker/Dockerfile.airflow .
+docker push localhost:5050/custom-airflow:0.0.6
+```
+
+### Environment Variables
+
+Configured in [airflow/values.yaml](airflow/values.yaml#L93-L123):
+```yaml
+env:
+  - name: PYTHONPATH
+    value: /opt/airflow/src:/opt/airflow/dags
+  - name: MLFLOW_TRACKING_URI
+    value: http://ml-mlflow:5000
+  - name: MINIO_ENDPOINT
+    value: minio:9000
+  - name: MINIO_ACCESS_KEY
+    value: admin
+  - name: MINIO_SECRET_KEY
+    value: admin123
+  - name: DB_HOST
+    value: postgresql
+  - name: DB_PORT
+    value: "5432"
+  - name: DB_USER
+    value: crypto
+  - name: DB_PASSWORD
+    value: crypto123
+  - name: DB_NAME
+    value: crypto
+  - name: REDIS_HOST
+    value: ml-redis-master
+  - name: REDIS_PORT
+    value: "6379"
+  - name: REDIS_PASSWORD
+    value: redis123
+```
+
+### Known Limitations
+
+#### 1. Log Persistence
+- **Issue**: Logs are not persisted after worker pod deletion
+- **Reason**: Docker Desktop's `local-path` provisioner doesn't support `ReadWriteMany` volumes
+- **Workaround (Dev)**: View logs while task is running
+- **Solution (Prod)**: Configure remote logging to S3/GCS
+
+#### 2. Some Symbols Have Less Data
+- **Issue**: AVAXUSDT has only 186,728 records instead of 250,000
+- **Reason**: Limited historical data availability on Binance
+- **Impact**: This is expected behavior, not a bug
+
+#### 3. Local Registry for Custom Images
+- **Issue**: Uses `localhost:5050` Docker registry
+- **Reason**: Simplifies local development on Docker Desktop
+- **Limitation**: Not suitable for multi-node clusters
+- **Solution (Prod)**: Use cloud container registry (ECR, GCR, ACR)
+
+---
+
+## 🔄 Unified ETL + ML Pipelines (Airflow)
+
+The platform includes two Airflow DAGs that work together for complete ML automation:
+
+### ETL Pipeline: `etl_crypto_data_pipeline`
+
+Extracts crypto data from Binance API and loads to PostgreSQL.
+
+```bash
+# Run ETL demo (standalone)
+./scripts/demo-etl-pipeline.sh --symbol BTCUSDT
+
+# Run via Airflow
+./scripts/demo-etl-pipeline.sh --airflow
+```
+
+**DAG Stages:**
+1. **Pre-checks** - Validate Binance API, MinIO, PostgreSQL connectivity
+2. **Extraction** - Fetch data from Binance API (10 symbols, ~3M records)
+3. **Loading** - Transform and load to PostgreSQL with upsert
+
+**Schedule:** `@hourly`
+
+### ML Training Pipeline: `ml_training_pipeline`
+
+Trains models on crypto data and deploys to production.
+
+```bash
+# Run ML demo (standalone)
+./scripts/demo-ml-pipeline.sh --symbol BTCUSDT
+
+# Run via Airflow
+./scripts/demo-ml-pipeline.sh --airflow
+```
+
+**DAG Stages:**
+1. **Data Validation** - Check data quality for training readiness
+2. **Feature Engineering** - Generate 80+ technical indicators
+3. **Model Training** - Train LightGBM and XGBoost models
+4. **Model Promotion** - Promote best models to staging/production
+5. **API Reload** - Trigger inference API to load new models
+
+**Schedule:** `0 2 * * *` (Daily at 2 AM, after ETL completes)
+
+### Deploy Airflow on Kubernetes
+
+```bash
+# Deploy complete infrastructure first
+./scripts/k8s-bootstrap.sh
+
+# Deploy Airflow with custom image
+./scripts/airflow-bootstrap.sh --build
+
+# Access Airflow UI
+kubectl port-forward -n ml-pipeline svc/airflow-webserver 8080:8080
+# Open http://localhost:8080 (admin/admin123)
+```
+
+### Supported Crypto Symbols
+
+`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `ADAUSDT`, `SOLUSDT`, `XRPUSDT`, `DOTUSDT`, `AVAXUSDT`, `MATICUSDT`, `LINKUSDT`
+
+---
+
 ## 🎬 Try It Yourself: E2E Demo
 
 Want to see the full workflow in action? Run our demo script that automatically:
@@ -186,29 +451,249 @@ After running the demo:
 
 ---
 
+## 🏢 Adapt for Your Business Use Case
+
+This boilerplate works for **any ML problem**. We provide ready-to-use examples and templates.
+
+### Quick Start with Sample Data
+
+```bash
+cd examples/generic-ml-usecase
+
+# Generate sample data and train a model
+./run_demo.sh demand_forecasting    # E-commerce demand prediction
+./run_demo.sh churn_prediction      # Customer churn classification
+./run_demo.sh fraud_detection       # Transaction fraud detection
+./run_demo.sh price_optimization    # Dynamic pricing
+```
+
+### Train on Your Own Data
+
+```bash
+# 1. Prepare your CSV/Parquet data file
+
+# 2. Train and register model
+python examples/generic-ml-usecase/train_model.py \
+    --data your_data.csv \
+    --target target_column \
+    --task regression \
+    --model-name your_model_name \
+    --promote
+
+# 3. Reload API to serve new model
+curl -X POST http://localhost:8000/models/reload
+```
+
+### Supported Use Cases
+
+| Industry | Use Cases | Task Type |
+|----------|-----------|-----------|
+| **E-commerce** | Demand forecasting, price optimization, recommendations | Regression |
+| **Finance** | Fraud detection, credit scoring, churn prediction | Classification |
+| **Healthcare** | Patient outcomes, resource allocation | Both |
+| **Marketing** | Lead scoring, campaign optimization, CLV | Both |
+| **Operations** | Predictive maintenance, inventory optimization | Both |
+
+### What's Included
+
+```
+examples/generic-ml-usecase/
+├── data_generator.py      # Generate sample datasets
+├── train_model.py         # Generic model training script
+├── run_demo.sh            # E2E demo runner
+└── ADAPTATION_GUIDE.md    # Detailed customization guide
+```
+
+**For detailed instructions, see [Adaptation Guide](examples/generic-ml-usecase/ADAPTATION_GUIDE.md)**
+
+---
+
+## 🏭 Production Recommendations
+
+Based on lessons learned from deployment and troubleshooting:
+
+### High Availability
+
+**Database**:
+- Use managed PostgreSQL (AWS RDS, GCP Cloud SQL, Azure Database)
+- Enable automated backups and point-in-time recovery
+- Configure read replicas for query-heavy workloads
+- Use connection pooling (PgBouncer)
+
+**Redis**:
+- Use managed Redis (AWS ElastiCache, GCP Memorystore, Azure Cache)
+- Enable Redis Cluster mode for horizontal scaling
+- Configure persistence (AOF + RDB)
+
+**Object Storage**:
+- Replace MinIO with cloud object storage (S3, GCS, Azure Blob)
+- Enable versioning for data protection
+- Configure lifecycle policies for cost optimization
+- Use bucket replication for disaster recovery
+
+### Logging & Monitoring
+
+**Remote Logging** (Critical for KubernetesExecutor):
+```yaml
+# airflow/values.yaml
+config:
+  logging:
+    remote_logging: "True"
+    remote_base_log_folder: "s3://your-airflow-logs-bucket/"
+    remote_log_conn_id: "aws_default"
+    encrypt_s3_logs: "True"
+```
+
+**Prometheus Metrics**:
+- Configure remote write to long-term storage (Cortex, Thanos, or cloud provider)
+- Set up alerting rules for critical metrics:
+  - DAG failure rate
+  - Task execution time (SLOs)
+  - Database connection pool exhaustion
+  - MinIO/S3 request errors
+
+**Log Aggregation**:
+- Use Elasticsearch + Kibana or cloud logging (CloudWatch, Stackdriver)
+- Configure structured logging (JSON format)
+- Set retention policies
+
+### Security
+
+**Secrets Management**:
+```bash
+# Use Kubernetes secrets or external secret managers
+kubectl create secret generic airflow-secrets \
+  --from-literal=postgres-password=<strong-password> \
+  --from-literal=redis-password=<strong-password> \
+  -n ml-pipeline
+
+# Or use AWS Secrets Manager, GCP Secret Manager, Azure Key Vault
+```
+
+**Network Security**:
+- Configure Network Policies to restrict pod-to-pod communication
+- Use TLS for all inter-service communication
+- Enable TLS for PostgreSQL, Redis, and MLflow
+- Configure Ingress with TLS certificates (Let's Encrypt)
+
+**Access Control**:
+- Enable Airflow RBAC with LDAP/OAuth integration
+- Configure MLflow authentication (e.g., basic auth, OAuth)
+- Use Kubernetes RBAC for pod access
+- Rotate credentials regularly
+
+### Scaling
+
+**Airflow Workers** (KubernetesExecutor):
+```yaml
+# airflow/values.yaml
+config:
+  kubernetes:
+    worker_pods_creation_batch_size: 16
+    multi_namespace_mode: True  # Scale across multiple namespaces
+```
+
+**Resource Limits**:
+```yaml
+# Set appropriate requests and limits
+scheduler:
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+workers:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+```
+
+**Database Connection Pooling**:
+```yaml
+# airflow/values.yaml
+config:
+  core:
+    sql_alchemy_pool_size: 20
+    sql_alchemy_max_overflow: 40
+    sql_alchemy_pool_recycle: 1800
+```
+
+### Deployment Best Practices
+
+**Container Registry**:
+- Use private cloud registry (ECR, GCR, ACR)
+- Implement image scanning for vulnerabilities
+- Use image signing and verification
+- Tag images with git commit SHA for traceability
+
+**CI/CD Pipeline**:
+1. Build custom Airflow image on every commit
+2. Run DAG validation tests (syntax, imports)
+3. Deploy to staging environment
+4. Run integration tests
+5. Promote to production with approval
+
+**GitOps Workflow**:
+- Store Helm values and Kubernetes manifests in Git
+- Use ArgoCD or FluxCD for declarative deployment
+- Implement PR-based review process for configuration changes
+- Enable automatic sync for dev, manual for production
+
+**Disaster Recovery**:
+- Backup Airflow metadata database daily
+- Backup MinIO/S3 data with versioning
+- Document restore procedures
+- Test recovery process quarterly
+- Maintain runbooks for common failure scenarios
+
+### Cost Optimization
+
+**Resource Management**:
+- Set appropriate resource requests and limits
+- Use cluster autoscaler to scale nodes
+- Implement pod priority and preemption
+- Use spot/preemptible instances for non-critical workloads
+
+**Storage Optimization**:
+- Configure lifecycle policies for old data
+- Use cheaper storage tiers for infrequently accessed data
+- Compress data before storing in MinIO/S3
+- Delete old Airflow logs (retention policy)
+
+---
+
 ## 📦 Production Deployment (Kubernetes)
 
 > **✅ TESTED:** Docker Desktop Kubernetes (ARM64/Apple Silicon)
 
-**Docker Compose is for local testing only. For production, use Kubernetes deployment.**
-
 ### One-Command Deployment
 
 ```bash
-# Deploy complete infrastructure + API
-./scripts/k8s-bootstrap.sh
+# Deploy complete infrastructure
+./scripts/k8s-bootstrap.sh --infra-only
 
-# Validate everything is working
-./scripts/validate-deployment.sh --env k8s
+# Check deployment status
+./scripts/k8s-bootstrap.sh --status
 ```
 
-This deploys:
-- MinIO (S3-compatible storage)
-- Redis (feature caching)
-- PostgreSQL (MLflow backend)
-- MLflow (model registry)
-- Prometheus + Grafana (monitoring)
-- Inference API (2 replicas with HPA)
+**Infrastructure Deployed**:
+
+| Component | Purpose | Details |
+|-----------|---------|---------|
+| **PostgreSQL** | Databases | `crypto` (ETL data), `airflow` (metadata) |
+| **MinIO** | Object Storage | S3-compatible, buckets: `crypto-raw-data`, `crypto-features`, `mlflow-artifacts` |
+| **Redis** | Caching | Feature caching for ML inference |
+| **MLflow** | ML Platform | Experiment tracking, model registry |
+| **Airflow 3.0** | Orchestration | ETL + ML pipelines, KubernetesExecutor |
+| **Prometheus** | Metrics | Time-series database for monitoring |
+| **Grafana** | Visualization | Dashboards and alerting |
 
 ### Access Services
 
@@ -478,9 +963,268 @@ This boilerplate includes a cryptocurrency prediction example, but works for any
 
 ## 🐛 Troubleshooting
 
-### API Returns 503 "No models loaded"
+### Airflow 3.0 Deployment Issues
 
-**Cause:** API is waiting for models to be registered and promoted to Production stage.
+#### 1. API Server Error: "invalid choice: 'api-server'"
+
+**Symptom**: API server pod crashes with:
+```
+airflow command error: argument GROUP_OR_COMMAND: invalid choice: 'api-server'
+/home/airflow/.local/lib/python3.9/site-packages/airflow/metrics/statsd_logger.py:184
+```
+
+**Root Cause**: Wrong Airflow version deployed (2.x instead of 3.0)
+
+**Fix**:
+1. Ensure Helm chart version is `1.18.0`:
+   ```bash
+   helm upgrade --install airflow apache-airflow/airflow \
+     --namespace ml-pipeline \
+     --values airflow/values.yaml \
+     --version 1.18.0 \
+     --wait --timeout 10m
+   ```
+
+2. Rebuild custom Airflow image with `--no-cache`:
+   ```bash
+   docker build --no-cache -t localhost:5050/custom-airflow:0.0.6 \
+     -f docker/Dockerfile.airflow .
+   docker push localhost:5050/custom-airflow:0.0.6
+   ```
+
+3. Verify `imagePullPolicy: Always` in migration job
+4. Check pod logs show Python 3.12 (not 3.9)
+
+#### 2. DAGs Not Visible in Airflow UI
+
+**Symptom**: UI shows "No Dags found" but `kubectl exec -n ml-pipeline deployment/airflow-scheduler -- airflow dags list` shows them
+
+**Root Cause**: DAG persistence PVC mounting empty volume over baked-in DAGs from Docker image
+
+**Fix**: Disable DAG persistence in [airflow/values.yaml](airflow/values.yaml#L43-L45):
+```yaml
+dags:
+  persistence:
+    enabled: false  # DAGs are baked into custom Docker image
+```
+
+Then redeploy:
+```bash
+./scripts/k8s-bootstrap.sh --infra-only
+```
+
+#### 3. Worker Pods Failing with "DAG not found"
+
+**Symptom**: Worker pods crash with:
+```json
+{"level":"error","event":"DAG not found during start up","dag_id":"etl_crypto_data_pipeline"}
+```
+
+**Root Cause**: Same as #2 - DAG persistence volume mounting over baked-in DAGs
+
+**Fix**: Same as #2 - disable DAG persistence
+
+#### 4. Database Schema Mismatch
+
+**Symptom**:
+```
+Database error during bulk insert: column "trades_count" of relation "crypto_data" does not exist
+LINE 4: close_price, volume, quote_volume, trades_count,...
+```
+
+**Root Cause**: Old table schema had `num_trades` instead of `trades_count`
+
+**Fix**: Drop and recreate table with correct schema:
+```bash
+# Drop old table
+kubectl exec -n ml-pipeline postgresql-0 -- \
+  psql -U postgres -d crypto -c "DROP TABLE IF EXISTS crypto_data CASCADE;"
+
+# Redeploy (script will recreate with correct schema)
+./scripts/k8s-bootstrap.sh --infra-only
+```
+
+The correct schema (from [dags/etl/loader.py](dags/etl/loader.py#L156-L176)):
+```sql
+CREATE TABLE crypto_data (
+    id SERIAL PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    open_time BIGINT NOT NULL,
+    close_time BIGINT NOT NULL,
+    open_price REAL NOT NULL,
+    high_price REAL NOT NULL,
+    low_price REAL NOT NULL,
+    close_price REAL NOT NULL,
+    volume REAL NOT NULL,
+    quote_volume REAL NOT NULL,
+    trades_count INTEGER NOT NULL,  -- NOT num_trades
+    buy_ratio REAL,
+    batch_id TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(symbol, open_time)
+);
+```
+
+#### 5. Airflow UI Session Errors
+
+**Symptom**: UI shows database session errors or login fails
+
+**Root Cause**: Missing `session` table for Flask-Session
+
+**Fix**: Create session table manually:
+```bash
+kubectl exec -n ml-pipeline postgresql-0 -- \
+  psql -U postgres -d airflow -c "
+CREATE TABLE IF NOT EXISTS session (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(255) UNIQUE NOT NULL,
+    data BYTEA,
+    expiry TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_session_session_id ON session(session_id);
+CREATE INDEX IF NOT EXISTS ix_session_expiry ON session(expiry);
+GRANT ALL PRIVILEGES ON TABLE session TO airflow;
+GRANT USAGE, SELECT ON SEQUENCE session_id_seq TO airflow;
+"
+
+# Restart API server
+kubectl rollout restart deployment/airflow-api-server -n ml-pipeline
+```
+
+#### 6. Logs Not Accessible After Pod Deletion
+
+**Symptom**:
+```
+Could not read served logs: HTTPConnectionPool(host='etl-crypto-data-pipeline-...', port=8793):
+Max retries exceeded with url: /log/...
+```
+
+**Root Cause**: KubernetesExecutor deletes worker pods after completion, and logs persistence is disabled
+
+**Known Limitation**: Docker Desktop's `local-path` provisioner doesn't support `ReadWriteMany` volumes required for shared log storage
+
+**Workarounds**:
+
+1. **Development**: Accept that logs are not persisted (view logs while pod is running)
+   ```bash
+   # View logs while task is running
+   kubectl logs -n ml-pipeline <worker-pod-name> --follow
+   ```
+
+2. **Production**: Configure remote logging to S3/GCS in [airflow/values.yaml](airflow/values.yaml#L88-L90):
+   ```yaml
+   config:
+     logging:
+       remote_logging: "True"
+       remote_base_log_folder: "s3://your-bucket/airflow-logs/"
+       remote_log_conn_id: "aws_default"
+   ```
+
+#### 7. Migration Timeout Issues
+
+**Symptom**: Airflow pods stuck in init containers waiting for migrations
+
+**Root Cause**: `waitForMigrations.enabled: true` but migration job hasn't completed
+
+**Fix**: Disable for ALL components in [airflow/values.yaml](airflow/values.yaml):
+```yaml
+webserver:
+  waitForMigrations:
+    enabled: false
+
+scheduler:
+  waitForMigrations:
+    enabled: false
+
+triggerer:
+  waitForMigrations:
+    enabled: false
+
+dagProcessor:
+  waitForMigrations:
+    enabled: false
+
+apiServer:
+  waitForMigrations:
+    enabled: false
+```
+
+Migrations run in a separate Kubernetes Job BEFORE Helm deployment (handled by [scripts/k8s-bootstrap.sh](scripts/k8s-bootstrap.sh#L358-L393)).
+
+#### 8. MinIO Connection Issues
+
+**Symptom**: ETL tasks fail with MinIO connection errors
+
+**Root Cause**: Wrong MinIO endpoint in configuration
+
+**Fix**: Ensure [dags/etl/config.py](dags/etl/config.py#L27) uses correct service name:
+```python
+MINIO_CONFIG = {
+    'endpoint': os.getenv('MINIO_ENDPOINT', 'minio:9000'),  # NOT 'ml-minio:9000'
+    'access_key': os.getenv('MINIO_ACCESS_KEY', 'admin'),
+    'secret_key': os.getenv('MINIO_SECRET_KEY', 'admin123'),
+    'secure': False
+}
+```
+
+Verify MinIO service name:
+```bash
+kubectl get svc -n ml-pipeline | grep minio
+```
+
+### General Debugging Commands
+
+```bash
+# Check all pods status
+kubectl get pods -n ml-pipeline
+
+# View detailed pod information
+kubectl describe pod -n ml-pipeline <pod-name>
+
+# View pod logs
+kubectl logs -n ml-pipeline <pod-name> --follow
+
+# Check Airflow scheduler logs
+kubectl logs -n ml-pipeline deployment/airflow-scheduler --follow
+
+# Check Airflow worker logs (while running)
+kubectl logs -n ml-pipeline <worker-pod-name> --follow
+
+# Execute Airflow CLI commands
+kubectl exec -n ml-pipeline deployment/airflow-scheduler -- \
+  airflow dags list
+
+kubectl exec -n ml-pipeline deployment/airflow-scheduler -- \
+  airflow tasks list etl_crypto_data_pipeline
+
+# Check PostgreSQL data
+kubectl exec -n ml-pipeline postgresql-0 -- \
+  psql -U postgres -d crypto -c "SELECT COUNT(*) FROM crypto_data;"
+
+kubectl exec -n ml-pipeline postgresql-0 -- \
+  psql -U postgres -d crypto -c "SELECT symbol, COUNT(*) FROM crypto_data GROUP BY symbol;"
+
+# Check MinIO buckets
+kubectl run minio-check --rm -i --restart=Never -n ml-pipeline \
+  --image=minio/mc:latest \
+  --command -- /bin/sh -c "
+    mc alias set myminio http://minio:9000 admin admin123 && \
+    mc ls myminio/
+  "
+
+# Check Helm release status
+helm status airflow -n ml-pipeline
+helm status postgresql -n ml-pipeline
+
+# View deployment status
+kubectl rollout status deployment/airflow-scheduler -n ml-pipeline
+```
+
+### API Issues (Inference Service)
+
+#### API Returns 503 "No models loaded"
+
+**Cause**: API is waiting for models to be registered and promoted to Production stage.
 
 **Solution:**
 1. Register model in MLflow: `mlflow.sklearn.log_model(model, "model", registered_model_name="...")`
@@ -568,56 +1312,85 @@ kubectl top pods -n ml-pipeline
 ## 📁 Project Structure
 
 ```
-.
-├── app/                          # Inference API
-│   ├── production_api.py         # FastAPI application
-│   └── requirements.txt          # Python dependencies
+ml-eng-with-ops/
+├── airflow/
+│   └── values.yaml                    # Airflow Helm configuration
+│                                      # Critical settings: dags.persistence.enabled=false,
+│                                      # waitForMigrations.enabled=false
 │
-├── scripts/                      # Deployment & Validation Scripts
-│   ├── k8s-bootstrap.sh          # One-command K8s deployment
-│   ├── validate-deployment.sh    # Validate Docker/K8s deployments
-│   └── demo-e2e-workflow.py      # E2E demo script (model → MLflow → API → metrics)
+├── dags/
+│   ├── airflow_dags/                  # Airflow DAG definitions
+│   │   ├── etl_pipeline.py            # ETL DAG: Binance API → MinIO → PostgreSQL
+│   │   └── ml_training_pipeline.py    # ML DAG: Features → Training → MLflow
+│   │
+│   └── etl/                           # ETL modules (imported by DAGs)
+│       ├── config.py                  # Configuration (symbols, Binance API, MinIO, DB)
+│       ├── extraction.py              # Data extraction from Binance API
+│       └── loader.py                  # Data loading to PostgreSQL
 │
-├── dags/                         # ML Pipeline
-│   ├── inference_feature_pipeline.py  # Inference logic & task definitions
-│   ├── feature_eng.py            # Feature engineering functions
-│   ├── model_training.py         # Training utilities
-│   └── data_versioning.py        # DVC integration
+├── docker/
+│   ├── Dockerfile.airflow             # Custom Airflow 3.0 image
+│   │                                  # Base: apache/airflow:3.0.2-python3.12
+│   │                                  # Includes: DAGs, ETL modules, ML libraries
+│   └── Dockerfile.inference           # Inference API image (FastAPI)
 │
-├── k8s/                          # Kubernetes Manifests (PRODUCTION)
-│   ├── api-deployment.yaml       # Deployment spec with health probes
-│   ├── api-service.yaml          # Service for load balancing
-│   ├── api-hpa.yaml              # HorizontalPodAutoscaler
-│   ├── api-ingress.yaml          # External access
-│   ├── api-configmap.yaml        # Configuration
-│   ├── api-servicemonitor.yaml   # Prometheus integration
-│   ├── secrets.yaml.example      # Secrets template
-│   ├── kustomization.yaml        # Kustomize config
-│   └── README.md                 # Detailed K8s deployment guide
+├── scripts/
+│   ├── k8s-bootstrap.sh               # Main deployment script (idempotent)
+│   │                                  # Deploys: PostgreSQL, MinIO, Redis, MLflow,
+│   │                                  # Prometheus, Grafana, Airflow 3.0
+│   ├── demo-etl-pipeline.sh           # ETL pipeline demo
+│   └── demo-ml-pipeline.sh            # ML pipeline demo
 │
-├── minio/                        # MinIO Helm values
-│   └── values.yaml
-├── redis/                        # Redis Helm values
-│   └── values.yaml
-├── mlflow/                       # MLflow Helm values
-│   └── values.yaml
-├── grafana/                      # Grafana Helm values
-│   └── values.yaml
+├── minio/
+│   └── k8s/
+│       └── minio.yaml                 # MinIO Kubernetes manifest
+│                                      # Creates buckets: crypto-raw-data, crypto-features,
+│                                      # mlflow-artifacts
 │
-├── docker/                       # Docker Images
-│   └── Dockerfile.inference      # Production API image
+├── postgresql/
+│   └── values.yaml                    # PostgreSQL Helm configuration
+│                                      # Creates databases: crypto, airflow
 │
-├── src/config/                   # Configuration Management
-│   └── settings.py               # Pydantic settings
+├── redis/
+│   └── values.yaml                    # Redis Helm configuration
 │
-├── monitoring/                   # Monitoring Stack
-│   ├── prometheus.yml            # Prometheus configuration
-│   └── grafana/                  # Grafana dashboards
+├── mlflow/
+│   └── values.yaml                    # MLflow Helm configuration
 │
-├── docker-compose.yml            # Local testing (NOT for production)
-├── .env.example                  # Environment variables template
-└── README.md                     # This file
+├── grafana/
+│   └── values.yaml                    # Prometheus + Grafana Helm configuration
+│
+├── src/                               # Python modules (shared utilities)
+│   ├── config/
+│   │   └── settings.py                # Pydantic settings
+│   └── ...
+│
+├── k8s/                               # Inference API Kubernetes manifests
+│   ├── api-deployment.yaml
+│   ├── api-service.yaml
+│   ├── api-hpa.yaml
+│   └── ...
+│
+├── monitoring/
+│   ├── prometheus.yml
+│   └── grafana/
+│       └── dashboards/                # Grafana dashboard JSON files
+│
+├── README.md                          # This file (comprehensive documentation)
+├── TROUBLESHOOTING.md                 # Detailed troubleshooting guide
+└── ARCHITECTURE.md                    # Architecture deep dive
 ```
+
+### Key Files to Know
+
+| File | Purpose | Critical Settings |
+|------|---------|-------------------|
+| [airflow/values.yaml](airflow/values.yaml) | Airflow Helm config | `dags.persistence.enabled: false`<br>`waitForMigrations.enabled: false` for all components |
+| [scripts/k8s-bootstrap.sh](scripts/k8s-bootstrap.sh) | Deployment automation | Runs DB migrations before Helm<br>Creates crypto_data table<br>Sets up MinIO buckets |
+| [docker/Dockerfile.airflow](docker/Dockerfile.airflow) | Custom Airflow image | Base: `apache/airflow:3.0.2-python3.12`<br>Bakes in DAGs and dependencies |
+| [dags/etl/config.py](dags/etl/config.py) | ETL configuration | Symbols, API endpoints, DB credentials |
+| [dags/etl/extraction.py](dags/etl/extraction.py) | Binance data extraction | Pagination, rate limiting, MinIO upload |
+| [dags/etl/loader.py](dags/etl/loader.py) | PostgreSQL loading | Schema definition, bulk insert, upsert |
 
 ---
 
