@@ -53,9 +53,6 @@ A complete ML engineering platform that provides end-to-end infrastructure:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**What's Coming:**
-- ⏳ **Cloud Provider Examples** - AWS EKS, GCP GKE, Azure AKS templates
-
 ---
 
 ## 🚀 Quick Start (Kubernetes - Recommended)
@@ -74,7 +71,8 @@ A complete ML engineering platform that provides end-to-end infrastructure:
 git clone <repo-url>
 cd ml-eng-with-ops
 
-# Deploy everything (infrastructure + Airflow + ETL/ML pipelines)
+# Deploy infrastructure (PostgreSQL, MinIO, Redis, MLflow, Prometheus, Grafana, Airflow)
+# DAGs are baked into Airflow image - ready to trigger after deployment
 ./scripts/k8s-bootstrap.sh --infra-only
 ```
 
@@ -189,82 +187,6 @@ Total: ~2.25 million records
   - Calculates buy ratio: `(taker_buy_volume / total_volume) * 100`
   - Bulk insert with upsert logic: `ON CONFLICT (symbol, open_time) DO UPDATE`
   - Indexes on symbol, open_time for query performance
-
-### Step 2: Register Your Model in MLflow
-
-```python
-import mlflow
-import mlflow.sklearn  # or mlflow.pytorch, mlflow.tensorflow, etc.
-
-# Connect to running MLflow server
-mlflow.set_tracking_uri("http://localhost:5001")
-mlflow.set_experiment("my_experiment")
-
-# Load your trained model
-model = load_your_trained_model()
-
-# Register model
-with mlflow.start_run():
-    mlflow.log_params({"model_type": "lightgbm", "version": "1.0"})
-    mlflow.log_metrics({"accuracy": 0.95, "f1": 0.93})
-
-    # Register with naming convention: crypto_{model_type}_{task}_{symbol}
-    mlflow.sklearn.log_model(
-        model,
-        "model",
-        registered_model_name="crypto_lightgbm_return_1step_BTCUSDT"
-    )
-```
-
-### Step 3: Promote Model to Production
-
-**IMPORTANT:** Just registering the model is **NOT enough**. The API loads models based on their **MLflow stage**.
-
-**Option A: Using MLflow UI**
-1. Go to http://localhost:5001
-2. Navigate to "Models" tab
-3. Find your registered model
-4. Click on version → "Stage" → Select "Production"
-
-**Option B: Programmatically**
-```python
-from mlflow.tracking import MlflowClient
-
-client = MlflowClient()
-client.transition_model_version_stage(
-    name="crypto_lightgbm_return_1step_BTCUSDT",
-    version=1,
-    stage="Production"
-)
-```
-
-### Step 4: Reload API to Load Models
-
-```bash
-# Option 1: Restart API container
-docker-compose restart api
-
-# Option 2: Use reload endpoint (hot reload)
-curl -X POST "http://localhost:8000/models/reload"
-```
-
-### Step 5: Make Predictions
-
-```bash
-# Check health and loaded models
-curl http://localhost:8000/health
-
-# Get prediction
-curl -X POST "http://localhost:8000/predict/BTCUSDT" \
-  -H "Content-Type: application/json" \
-  -d '{"tasks": ["return_1step"]}'
-```
-
-**Key Points:**
-- ✅ Must promote model to "Production" stage for API to load it
-- ✅ API loads models based on MLflow stage: Production → Staging → None
-- ✅ Model naming convention: `crypto_{model_type}_{task}_{symbol}`
-- ✅ Supported: scikit-learn, LightGBM, XGBoost, PyTorch, TensorFlow
 
 ---
 
